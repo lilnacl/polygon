@@ -1,0 +1,477 @@
+#include <iostream>
+#include <fstream>
+#include <sstream>
+#include <vector>
+#include <memory>
+#include <unordered_map>
+#include <string>
+#include <algorithm>
+#include <cmath>
+#include <limits>
+#include <queue>
+#include <set>
+#include <stack>
+#include <unordered_set>
+#include <iomanip>
+#include <chrono>
+#include <cassert>
+
+using namespace std;
+using namespace chrono;
+
+struct Node {
+    double lon = 0.0; // X
+    double lat = 0.0; // Y
+    vector<pair<Node*, double>> edges; // Связи
+};
+
+class Graph {
+public:
+    Node* addNode(double lon, double lat) {
+        ostringstream keyStream;
+        keyStream << fixed << setprecision(10) << lon << "," << lat;
+        string key = keyStream.str();
+
+        auto it = node_map.find(key);
+        if (it != node_map.end()) {
+            return it->second; // Уже есть
+        }
+
+        auto node = make_unique<Node>();
+        node->lon = lon;
+        node->lat = lat;
+        Node* nodePtr = node.get();
+
+        nodes.push_back(move(node));
+        node_map[key] = nodePtr;
+        return nodePtr;
+    }
+
+    Node* getNode(double lon, double lat) {
+        ostringstream keyStream;
+        keyStream << fixed << setprecision(10) << lon << "," << lat;
+        string key = keyStream.str();
+
+        auto it = node_map.find(key);
+        return (it != node_map.end()) ? it->second : nullptr; // Найти узел
+    }
+
+    void readFromFile(const string& filename) {
+        ifstream file(filename);
+        if (!file.is_open()) {
+            cerr << "Failed to open file: " << filename << "\n";
+            return;
+        }
+
+        string line;
+        while (getline(file, line)) {
+            istringstream lineStream(line);
+            string parentData, edgesData;
+
+            if (getline(lineStream, parentData, ':')) {
+                replace(parentData.begin(), parentData.end(), ',', ' ');
+                istringstream parentStream(parentData);
+
+                double lon1, lat1;
+                if (!(parentStream >> lon1 >> lat1)) {
+                    cerr << "Error parsing node: " << parentData << "\n";
+                    continue;
+                }
+                Node* parentNode = addNode(lon1, lat1);
+
+                while (getline(lineStream, edgesData, ';')) {
+                    replace(edgesData.begin(), edgesData.end(), ',', ' ');
+                    istringstream edgeStream(edgesData);
+
+                    double lon2, lat2, weight;
+                    if (!(edgeStream >> lon2 >> lat2 >> weight)) {
+                        cerr << "Error parsing edge: " << edgesData << "\n";
+                        continue;
+                    }
+                    Node* childNode = addNode(lon2, lat2);
+
+                    parentNode->edges.emplace_back(childNode, weight);
+                    childNode->edges.emplace_back(parentNode, weight);
+                }
+            }
+        }
+        file.close();
+    }
+
+    Node* findClosestNode(double lat, double lon) const {
+        double minDist = numeric_limits<double>::max();
+        Node* closest = nullptr;
+
+        for (auto& up : nodes) {
+            Node* n = up.get();
+            double dx = n->lon - lon;
+            double dy = n->lat - lat;
+            double dist = sqrt(dx * dx + dy * dy);
+            if (dist < minDist) {
+                minDist = dist;
+                closest = n;
+            }
+        }
+        return closest; // Ближайший узел
+    }
+
+    void printPath(const vector<Node*>& path) const {
+        if (path.empty()) {
+            cout << "Path not found.\n";
+            return;
+        }
+        double totalWeight = 0.0;
+        cout << "Path:\n";
+        for (size_t i = 0; i < path.size(); ++i) {
+            cout << "(" << path[i]->lat << ", " << path[i]->lon << ")";
+            if (i < path.size() - 1) {
+                cout << " -> ";
+                Node* cur = path[i];
+                Node* nxt = path[i + 1];
+                for (auto& edge : cur->edges) {
+                    if (edge.first == nxt) {
+                        totalWeight += edge.second;
+                        break;
+                    }
+                }
+            }
+        }
+        cout << "\nTotal path length: " << totalWeight << "\n";
+    }
+
+    const vector<unique_ptr<Node>>& getNodes() const {
+        return nodes;
+    }
+
+private:
+    vector<unique_ptr<Node>> nodes; // Узлы
+    unordered_map<string, Node*> node_map; // Карта
+};
+
+// === BFS ===
+vector<Node*> bfs(Node* start, Node* end) {
+    unordered_map<Node*, Node*> previous; // Память: O(V), для хранения всех вершин
+    queue<Node*> q; // Память: O(V), для хранения вершин в очереди
+    q.push(start); // Сложность: O(1)  Память: увеличивается на O(1)
+    previous[start] = nullptr; // Сложность: O(1) Память: увеличивается на O(1)
+    while (!q.empty()) { // Сложность: O(V + E), где V - вершины, E - рёбра
+        Node* current = q.front(); // Сложность: O(1)
+        q.pop(); // Сложность: O(1). Память: уменьшается на O(1)
+        if (current == end) break; // Сложность: O(1), проверка на совпадение
+        for (auto& edge : current->edges) { // Сложность: O(d), где d - степень текущей вершины
+            Node* neighbor = edge.first; // Сложность: O(1) Память: O(1)
+            if (previous.find(neighbor) == previous.end()) { // Сложность: O(1)
+                previous[neighbor] = current; // Сложность: O(1) Память: увеличивается на O(1)
+                q.push(neighbor); // Сложность: O(1) Память: увеличивается на O(1)
+            }
+        }
+    }
+    vector<Node*> path; // Память: O(V), для хранения пути
+    for (Node* at = end; at != nullptr; at = previous[at]) { // Сложность: O(L), где L - длина пути
+        path.push_back(at); // Сложность: O(1) на итерацию Память: увеличивается на O(1)
+    }
+    reverse(path.begin(), path.end()); // Сложность: O(L), реверс пути Память: O(1) дополнительная
+    return path; // Сложность: O(1) Память: O(V) возвращаемого значения
+}
+
+// === DFS ===
+vector<Node*> dfs(Node* start, Node* end) {
+    unordered_map<Node*, Node*> previous; // Память: O(V), для хранения всех вершин
+    stack<Node*> s; // Память: O(V), для хранения вершин в стеке
+    s.push(start); // Сложность: O(1) Память: увеличивается на O(1)
+    previous[start] = nullptr; // Сложность: O(1) Память: увеличивается на O(1)
+    while (!s.empty()) { // Сложность: O(V + E), где V - вершины, E - рёбра
+        Node* current = s.top(); // Сложность: O(1)
+        s.pop(); // Сложность: O(1) Память: уменьшается на O(1)
+        if (current == end) break; // Сложность: O(1), проверка на совпадение
+        for (auto& edge : current->edges) { // Сложность: O(d), где d - степень текущей вершины
+            Node* neighbor = edge.first; // Сложность: O(1) Память: O(1)
+            if (previous.find(neighbor) == previous.end()) { // Сложность: O(1)
+                previous[neighbor] = current; // Сложность: O(1) Память: увеличивается на O(1)
+                s.push(neighbor); // Сложность: O(1) Память: увеличивается на O(1)
+            }
+        }
+    }
+    vector<Node*> path; // Память: O(V), для хранения пути
+    for (Node* at = end; at != nullptr; at = previous[at]) { // Сложность: O(L), где L - длина пути
+        path.push_back(at); // Сложность: O(1) на итерацию Память: увеличивается на O(1)
+    }
+    reverse(path.begin(), path.end()); // Сложность: O(L), реверс пути Память: O(1) дополнительная
+    return path; // Сложность: O(1) Память: O(V) возвращаемого значения
+}
+
+// === Дейкстра ===
+vector<Node*> dijkstra(Graph& graph, Node* start, Node* goal) {
+    if (!start || !goal) return {}; // Сложность: O(1) Память: O(1)
+
+    unordered_map<Node*, double> dist; // Память: O(V), где V — количество вершин
+    unordered_map<Node*, Node*> cameFrom; // Память: O(V), для хранения пути
+    unordered_map<Node*, bool> visited; // Память: O(V), для отметки посещённых вершин
+
+    dist[start] = 0.0; // Сложность: O(1) Память: увеличивается на O(1)
+
+    using PQItem = pair<double, Node*>;
+    priority_queue<PQItem, vector<PQItem>, greater<>> pq; // Память: O(V), для вершин в очереди
+    pq.emplace(0.0, start); // Сложность: O(log V) Память: увеличивается на O(1)
+
+    while (!pq.empty()) { // Сложность: O((V + E) log V), где E — количество рёбер
+        PQItem topPair = pq.top(); // Сложность: O(1)
+        pq.pop(); // Сложность: O(log V) Память: уменьшается на O(1)
+
+        double currentDist = topPair.first; // Сложность: O(1)
+        Node* currentNode = topPair.second; // Сложность: O(1)
+
+        if (visited[currentNode]) {
+            continue; // Сложность: O(1)
+        }
+        visited[currentNode] = true; // Сложность: O(1) Память: увеличивается на O(1)
+
+        if (currentNode == goal) { // Сложность: O(1), проверка на совпадение
+            vector<Node*> path; // Память: O(V), для хранения пути
+            for (Node* p = goal; p; p = cameFrom[p]) { // Сложность: O(L), где L — длина пути
+                path.push_back(p); // Сложность: O(1) Память: увеличивается на O(1) за вершину
+            }
+            reverse(path.begin(), path.end()); // Сложность: O(L) Память: O(1) дополнительная
+            return path; // Сложность: O(1) Память: O(V)
+        }
+
+        for (auto& edge : currentNode->edges) { // Сложность: O(d), где d — степень текущей вершины
+            Node* neighbor = edge.first; // Сложность: O(1) Память: O(1)
+            double weight = edge.second; // Сложность: O(1)
+            double alt = currentDist + weight; // Сложность: O(1)
+
+            if (dist.find(neighbor) == dist.end()) { // Сложность: O(1)
+                dist[neighbor] = numeric_limits<double>::infinity(); // Сложность: O(1) Память: O(1)
+            }
+            if (alt < dist[neighbor]) { // Сложность: O(1)
+                dist[neighbor] = alt; // Сложность: O(1) Память: O(1)
+                cameFrom[neighbor] = currentNode; // Сложность: O(1) Память: O(1)
+                pq.emplace(alt, neighbor); // Сложность: O(log V) Память: увеличивается на O(1)
+            }
+        }
+    }
+
+    return {}; // Сложность: O(1) Память: O(1)
+}
+
+// === A* ===
+double heuristic(Node* a, Node* b) {
+    double dx = a->lon - b->lon; // Сложность: O(1)
+    double dy = a->lat - b->lat; // Сложность: O(1)
+    return sqrt(dx * dx + dy * dy); // Сложность: O(1)
+}
+
+vector<Node*> aStar(Graph& graph, Node* start, Node* goal) {
+    if (!start || !goal) return {}; // Сложность: O(1) Память: O(1)
+
+    unordered_map<Node*, double> gScore; // Память: O(V), где V — количество вершин
+    unordered_map<Node*, double> fScore; // Память: O(V), для оценки стоимости пути
+    unordered_map<Node*, Node*> cameFrom; // Память: O(V), для восстановления пути
+    unordered_map<Node*, bool> visited; // Память: O(V), для отметки посещённых вершин
+
+    gScore[start] = 0.0; // Сложность: O(1) Память: увеличивается на O(1)
+    fScore[start] = heuristic(start, goal); // Сложность: O(1)
+
+    using PQItem = pair<double, Node*>;
+    priority_queue<PQItem, vector<PQItem>, greater<>> openSet; // Память: O(V), для хранения открытых вершин
+    openSet.emplace(fScore[start], start); // Сложность: O(log V) Память: увеличивается на O(1)
+
+    while (!openSet.empty()) { // Сложность: O((V + E) log V), где E — количество рёбер
+        PQItem topPair = openSet.top(); // Сложность: O(1)
+        openSet.pop(); // Сложность: O(log V) Память: уменьшается на O(1)
+
+        Node* currentNode = topPair.second; // Сложность: O(1)
+
+        if (currentNode == goal) { // Сложность: O(1), проверка на совпадение
+            vector<Node*> path; // Память: O(V), для хранения пути
+            for (Node* p = goal; p; p = cameFrom[p]) { // Сложность: O(L), где L — длина пути
+                path.push_back(p); // Сложность: O(1) Память: увеличивается на O(1) за вершину
+            }
+            reverse(path.begin(), path.end()); // Сложность: O(L) Память: O(1) дополнительная
+            return path; // Сложность: O(1) Память: O(V)
+        }
+
+        visited[currentNode] = true; // Сложность: O(1) Память: увеличивается на O(1)
+
+        for (auto& edge : currentNode->edges) { // Сложность: O(d), где d — степень текущей вершины
+            Node* neighbor = edge.first; // Сложность: O(1) Память: O(1)
+            double weight = edge.second; // Сложность: O(1)
+            if (visited[neighbor]) {
+                continue; // Сложность: O(1)
+            }
+
+            double tentative_gScore = gScore[currentNode] + weight; // Сложность: O(1)
+
+            if (gScore.find(neighbor) == gScore.end()) { // Сложность: O(1)
+                gScore[neighbor] = numeric_limits<double>::infinity(); // Сложность: O(1) Память: O(1)
+            }
+
+            if (tentative_gScore < gScore[neighbor]) { // Сложность: O(1)
+                cameFrom[neighbor] = currentNode; // Сложность: O(1) Память: O(1)
+                gScore[neighbor] = tentative_gScore; // Сложность: O(1) Память: O(1)
+                fScore[neighbor] = tentative_gScore + heuristic(neighbor, goal); // Сложность: O(1)
+                openSet.emplace(fScore[neighbor], neighbor); // Сложность: O(log V) Память: увеличивается на O(1)
+            }
+        }
+    }
+    return {}; // Сложность: O(1) Память: O(1)
+}
+// Функция для создания тестового графа
+Graph createTestGraph() {
+    Graph graph;
+    Node* node1 = graph.addNode(10.0, 20.0);
+    Node* node2 = graph.addNode(15.0, 25.0);
+    Node* node3 = graph.addNode(20.0, 30.0);
+    Node* node4 = graph.addNode(25.0, 35.0);
+
+    // Связываем узлы
+    node1->edges.emplace_back(node2, 5.0);
+    node2->edges.emplace_back(node3, 10.0);
+    node3->edges.emplace_back(node4, 15.0);
+    node1->edges.emplace_back(node3, 12.0);
+
+    return graph;
+}
+
+// Тест для функции addNode
+void testAddNode() {
+    Graph graph = createTestGraph();
+    Node* node1 = graph.getNode(10.0, 20.0);
+    Node* node2 = graph.getNode(15.0, 25.0);
+
+    assert(node1 != nullptr);
+    assert(node2 != nullptr);
+    assert(node1->lon == 10.0);
+    assert(node2->lat == 25.0);
+    std::cout << "testAddNode passed!\n";
+}
+
+// Тест для функции getNode
+void testGetNode() {
+    Graph graph = createTestGraph();
+    Node* foundNode = graph.getNode(10.0, 20.0);
+
+    assert(foundNode != nullptr);  // Узел должен быть найден
+    assert(foundNode->lon == 10.0);
+    assert(foundNode->lat == 20.0);
+
+    Node* missingNode = graph.getNode(30.0, 40.0);
+    assert(missingNode == nullptr);  // Узел не должен быть найден
+    std::cout << "testGetNode passed!\n";
+}
+
+
+
+// Тест для алгоритма BFS
+void testBFS() {
+    Graph graph = createTestGraph();
+    Node* node1 = graph.getNode(10.0, 20.0);
+    Node* node4 = graph.getNode(25.0, 35.0);
+
+    std::vector<Node*> path = bfs(node1, node4);
+
+    assert(path.size() >= 2);
+    assert(path[0] == node1);
+    assert(path.back() == node4);
+    std::cout << "testBFS passed!\n";
+}
+
+// Тест для алгоритма DFS
+void testDFS() {
+    Graph graph = createTestGraph();
+    Node* node1 = graph.getNode(10.0, 20.0);
+    Node* node4 = graph.getNode(25.0, 35.0);
+
+    std::vector<Node*> path = dfs(node1, node4);
+
+    assert(path.size() >= 2);
+    assert(path[0] == node1);
+    assert(path.back() == node4);
+    std::cout << "testDFS passed!\n";
+}
+
+// Тест для алгоритма Дейкстра
+void testDijkstra() {
+    Graph graph = createTestGraph();
+    Node* node1 = graph.getNode(10.0, 20.0);
+    Node* node4 = graph.getNode(25.0, 35.0);
+
+    std::vector<Node*> path = dijkstra(graph, node1, node4);
+
+    assert(path.size() >= 2);
+    assert(path[0] == node1);
+    assert(path.back() == node4);
+    std::cout << "testDijkstra passed!\n";
+}
+
+// Тест для алгоритма A*
+void testAStar() {
+    Graph graph = createTestGraph();
+    Node* node1 = graph.getNode(10.0, 20.0);
+    Node* node4 = graph.getNode(25.0, 35.0);
+
+    std::vector<Node*> path = aStar(graph, node1, node4);
+
+    assert(path.size() >= 2);
+    assert(path[0] == node1);
+    assert(path.back() == node4);
+    std::cout << "testAStar passed!\n";
+}
+
+
+int main() {
+    Graph graph;
+    graph.readFromFile("C:/Project/CLionProjects/untitled7/spb_graph.txt");
+
+    Node* startNode = graph.findClosestNode(60.017849, 30.366632);
+    Node* endNode = graph.findClosestNode(59.957238, 30.308108);
+
+    if (!startNode || !endNode) {
+        cerr << "Start or end nodes not found.\n";
+        return 1;
+    }
+
+    cout << "Closest node to start: (" << startNode->lat << ", " << startNode->lon << ")\n";
+    cout << "Closest node to end: (" << endNode->lat << ", " << endNode->lon << ")\n";
+
+    // Выполняем все алгоритмы
+    cout << "\n=== BFS ===\n";
+    auto start = high_resolution_clock::now();
+    vector<Node*> pathBFS = bfs(startNode, endNode);
+    auto end = high_resolution_clock::now();
+    graph.printPath(pathBFS);
+    cout << "Execution time (BFS): " << duration_cast<milliseconds>(end - start).count() << " ms\n";
+
+    cout << "\n=== DFS ===\n";
+    start = high_resolution_clock::now();
+    vector<Node*> pathDFS = dfs(startNode, endNode);
+    end = high_resolution_clock::now();
+    graph.printPath(pathDFS);
+    cout << "Execution time (DFS): " << duration_cast<milliseconds>(end - start).count() << " ms\n";
+
+    cout << "\n=== Dijkstra ===\n";
+    start = high_resolution_clock::now();
+    vector<Node*> pathDijkstra = dijkstra(graph, startNode, endNode);
+    end = high_resolution_clock::now();
+    graph.printPath(pathDijkstra);
+    cout << "Execution time (Dijkstra): " << duration_cast<milliseconds>(end - start).count() << " ms\n";
+
+    cout << "\n=== A* ===\n";
+    start = high_resolution_clock::now();
+    vector<Node*> pathAStar = aStar(graph, startNode, endNode);
+    end = high_resolution_clock::now();
+    graph.printPath(pathAStar);
+    cout << "Execution time (A*): " << duration_cast<milliseconds>(end - start).count() << " ms\n";
+
+    cout << "\n==================== TESTS ====================\n";
+
+    testAddNode();
+    testGetNode();
+    testBFS();
+    testDFS();
+    testDijkstra();
+    testAStar();
+    std::cout << "All tests passed!\n";
+
+    return 0;
+}
